@@ -1,0 +1,143 @@
+---
+title: "RFM Analysis results based on Ford dataset"
+author: "Sena Alparslan"
+output: html_notebook
+---
+
+
+
+```{r}
+
+library(dplyr)
+library(sqldf)
+library(ggplot2)
+library(ggformula)
+library(psych)
+
+getwd() 
+setwd("/Users/zisanyalcinkaya/Downloads")
+
+df<-read.csv("Forddata.csv", sep = ';')
+head(df)
+#describe function gives to the basic stats information such as median,mean, min,max
+describe(df)
+#Show attributes  
+attributes(df)
+# Generating a summary of all data attributes with the summary() function
+summary(df)
+# Inspecting the data source
+glimpse(df)
+
+df <- df %>% drop_na()
+
+df$Customer <- as.factor(as.character(df$Customer))
+
+is.factor(df$Customer)
+
+#Date.bought column mode is converted character to date
+df[,1] <- as.Date(df[,1], "%d.%m.%Y")
+
+df[,1]
+
+#Our last day is reference day.
+referenceDay = max(df[,1])
+referenceDay
+
+df 
+
+rfm_recency
+
+rfm_recency <- df %>% group_by(Customer) %>% 
+  summarise(Recency = as.numeric(referenceDay) - as.numeric(max(Date.bought)))
+
+#################################
+# Create customer-level dataset #
+#################################
+
+customers <- as.data.frame(unique(df$Customer))
+names(customers) <- "Customer"
+
+
+###########
+# Recency #
+###########
+
+df$recency <- as.Date(referenceDay) - as.Date(df$Date.bought)
+
+# remove returns so only consider the data of most recent *purchase*
+temp <- subset(df, df$Bought == 'ford')
+
+temp
+
+# Obtain # of days since most recent purchase
+recency <- aggregate(recency ~ Customer, data=temp, FUN=min, na.rm=TRUE)
+
+# Add recency to customer data
+customers <- merge(customers, recency, by="Customer", all=TRUE, sort=TRUE)
+customers$recency <- as.numeric(customers$recency)
+
+#############
+# Frequency #
+#############
+
+customer.invoices <- subset(df, select = c("Customer","Bought", "Amount"))
+customer.invoices <- customer.invoices[!duplicated(customer.invoices), ]
+customer.invoices <- customer.invoices[order(customer.invoices$Customer),]
+row.names(customer.invoices) <- NULL
+
+customer.invoices
+
+# Number of invoices/year (purchases only)
+annual.invoices <- aggregate(as.numeric(Amount) ~ Customer, data=customer.invoices, FUN=sum, na.rm=TRUE)
+
+annual.invoices
+names(annual.invoices)[names(annual.invoices)=="as.numeric(Amount)"] <- "frequency"
+
+# Add # of invoices to customers data
+customers <- merge(customers, annual.invoices, by="Customer", all=TRUE, sort=TRUE)
+
+range(customers$frequency)
+table(customers$frequency)
+
+# Remove customers who have not made any purchases in the past year
+customers <- subset(customers, frequency > 0)
+
+###############################
+# Monetary Value of Customers #
+###############################
+
+# Total spent on each item on an invoice
+retail$Amount <- retail$Quantity * retail$UnitPrice
+
+# Aggregated total sales to customer
+annual.sales <- aggregate(Amount ~ CustomerID, data=retail, FUN =sum, na.rm=TRUE)
+names(annual.sales)[names(annual.sales)=="Amount"] <- "monetary"
+
+# Add monetary value to customers dataset
+customers <- merge(customers, annual.sales, by="CustomerID", all.x=TRUE, sort=TRUE)
+
+# Identify customers with negative monetary value numbers, as they were presumably returning purchases from the preceding year
+hist(customers$monetary, main = NULL, labels = TRUE, las = 1, cex.lab = 1.1, cex.axis = 1.1, col = "blue")
+customers$monetary <- ifelse(customers$monetary < 0, 0, customers$monetary) # reset negative numbers to zero
+hist(customers$monetary, labels = TRUE, type = "count", breaks = 10, las = 1, col = "blue")
+
+
+####################
+# 80% and 20% rule #
+####################
+
+customers <- customers[order(-customers$monetary),]
+
+# Apply Pareto Principle (80/20 Rule)
+pareto.cutoff <- 0.8 * sum(customers$monetary)
+# customers <- customers[,!customers$cumsum]
+customers$pareto <- ifelse(cumsum(customers$monetary) <= pareto.cutoff, "Top 20%", "Bottom 80%")
+customers$pareto <- factor(customers$pareto, levels=c("Top 20%", "Bottom 80%"), ordered=TRUE)
+levels(customers$pareto)
+round(prop.table(table(customers$pareto)), 2)
+
+customers <- customers[order(customers$CustomerID),]
+
+```
+
+
